@@ -26,8 +26,22 @@ if (( ${#AGENTS[@]} == 0 )); then
   exit 1
 fi
 
+# Ranks for every character in one request per board, same two boards and
+# the same `agentIds` narrowing the app uses. `entry` is null with status
+# "unranked" for a character that has not placed, which is not an error.
+declare -A XP_RANK WORK_RANK
+ALL_IDS="$(printf '%s\n' "${AGENTS[@]}" | cut -d, -f2 | tr -d ' ' | paste -sd,)"
+for board in experience completedContracts; do
+  while IFS=$'\t' read -r aid rank; do
+    [[ "$board" == "experience" ]] && XP_RANK["$aid"]="$rank" || WORK_RANK["$aid"]="$rank"
+  done < <(curl -sL --max-time 12 \
+             "${OBSERVER}/api/leaderboards?agentIds=${ALL_IDS}&board=${board}" \
+           | jq -r '.requestedAgents[]? | [.agentId, (.entry.rank // "-")] | @tsv')
+done
+
 alerts=0
-printf '  %-8s %-7s %-8s %-8s %-8s %-6s %s\n' NAME EXPECT DRIVE ACTIVITY CRYSTAL HUNGER WHERE
+printf '  %-8s %-7s %-6s %-6s %-8s %-8s %-6s %s\n' \
+  NAME EXPECT XP WORK ACTIVITY DRIVE HUNGER WHERE
 for row in "${AGENTS[@]}"; do
   IFS=',' read -r name id expect <<< "$row"
   name="${name// /}"; id="${id// /}"; expect="${expect// /}"
@@ -37,22 +51,26 @@ for row in "${AGENTS[@]}"; do
   json="$(printf '%s' "$body" | sed '$d')"
 
   if [[ "$code" != "200" ]]; then
-    printf '  %-8s %-7s %-8s %s\n' "$name" "$expect" "offline" "(HTTP $code)"
+    printf '  %-8s %-7s %-6s %-6s %-8s %s\n' \
+      "$name" "$expect" "-" "-" "off" "(HTTP $code)"
     [[ "$expect" == "ours" ]] && { warn "$name is OFFLINE but we expect to drive it"; alerts=$((alerts+1)); }
     continue
   fi
 
-  read -r drive activity crystal hunger hstate where < <(printf '%s' "$json" | jq -r '
+  read -r drive activity hunger hstate where < <(printf '%s' "$json" | jq -r '
     [ (if (.aiMode == "hosted" or (.control.modelId != null)) then "hosted"
        elif (.control.state != "active") then "unheld" else "ours" end),
       (.activeAction.activity // .activeAction.kind // .status // "-"),
-      ((.inventory.crystal // 0) | tostring),
       ((.hunger.value // 0) | tostring),
       (.hunger.state // "?"),
       (.position.spaceId // "?") ] | @tsv' | tr '\t' ' ')
 
-  printf '  %-8s %-7s %-8s %-8s %-8s %-6s %s\n' \
-    "$name" "$expect" "$drive" "${activity:0:8}" "$crystal" "${hunger}/${hstate:0:1}" "$where"
+  # Drive and hunger are no longer rows on the device, but they still decide
+  # whether the alert frame fires, so they stay in this table.
+  printf '  %-8s %-7s %-6s %-6s %-8s %-8s %-6s %s\n' \
+    "$name" "$expect" \
+    "X${XP_RANK[$id]:--}" "W${WORK_RANK[$id]:--}" \
+    "${activity:0:8}" "$drive" "${hunger}/${hstate:0:1}" "$where"
 
   if [[ "$expect" == "ours" && "$drive" != "ours" ]]; then
     warn "$name expected to be ours but reads '$drive'"; alerts=$((alerts+1))

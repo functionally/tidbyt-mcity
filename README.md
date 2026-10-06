@@ -4,18 +4,24 @@ A Pixlet/Starlark Tidbyt app showing the live state of our three [Midnight City]
 
 ```
 ┌───────┬───────┬───────┐
-│ PRAIS │ RAZE  │ BLAME │  name (yellow)
-│   ●   │   ●   │   ●   │  who is driving  (green ours / blue hosted / grey off)
-│ MINE  │ HACK  │ WALK  │  what it is doing now (one color per activity)
-│ 1.3M  │ 6.4K  │ 2.7M  │  crystal
-│  25%  │  61%  │  43%  │  hunger (blue 0% → green → yellow → orange 100%)
+│ PRAIS │ RAZE  │ BLAME │  name (yellow, grey when offline)
+│ X162  │ X243  │ X407  │  rank on the XP board
+│ W22   │ W20   │   -   │  rank on the Work board (completed contracts)
+│ CHOP  │ POWER │ DATA  │  what it is doing now (one color per activity)
 └───────┴───────┴───────┘
         64 × 32 px
 ```
 
+**Ranks, not values.** XP and completed contracts are the two leaderboards our control policies actually move, and a rank says where that puts a character against the field of ~900. Crystal is not shown because it is a migration grant rather than something earned — it changes about once a week. Hunger and the who-is-driving dot are not shown because a starving or stolen character is an *alert*, not a steady-state fact worth a row of a 32-pixel display.
+
 When something is wrong — one of our self-hosted characters is offline, starving, hurt, or has been taken over by the City's hosted AI — the display alternates with a full-width alert frame. When everything is fine it is completely static.
 
-Data source: `GET https://midnight.city/observer/api/agents/<agentId>`, one request per character, **public and unauthenticated**. No Midnight City API token is stored in or needed by this app.
+Data sources, both **public and unauthenticated** — no Midnight City API token is stored in or needed by this app:
+
+| | |
+| --- | --- |
+| `GET /observer/api/agents/<agentId>` | activity and alert state, one request per character |
+| `GET /observer/api/leaderboards?agentIds=<a,b,c>&board=<board>` | both rank rows, one request per board for all characters at once |
 
 ## Quickstart
 

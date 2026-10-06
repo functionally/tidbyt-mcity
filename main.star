@@ -2,10 +2,19 @@
 
 Three columns, one per character. Each column reads top-down:
 
-    name  /  control dot  /  current activity  /  crystal  /  hunger
+    name  /  XP rank  /  Work rank  /  current activity
 
-Data comes from the observer's public per-agent endpoint, which needs no
-API token. When something is wrong (one of our self-hosted characters is
+Ranks, not values: XP and contracts completed are the two leaderboards our
+control policies actually move, and a rank says where that puts us against
+the field. Crystal was dropped because it is a migration grant rather than
+something earned — it changes about once a week — and hunger and the
+control dot were dropped because a starving or stolen character is an
+*alert*, not a steady-state fact worth a row of a 32 px display. Both are
+still caught by _alerts() below.
+
+Data comes from two public observer endpoints, neither needing an API
+token: the per-agent read for activity, and the leaderboard read for the
+two ranks. When something is wrong (one of our self-hosted characters is
 offline, starving, hurt, or has been taken over by the City's hosted AI)
 the display alternates with an alert frame; otherwise it is static.
 
@@ -24,6 +33,17 @@ OBSERVER = "https://midnight.city/observer"
 # local `pixlet serve` hot-reloads from hammering the endpoint.
 AGENT_TTL_S = 60
 
+# Ranks move on the order of once a day, so they can be cached far longer
+# than position and activity. One request per board, narrowed to our three
+# characters with `agentIds` — about 10-13 KB each, against 174 KB for the
+# unnarrowed call that returns all 24 boards' top-100 lists.
+BOARD_TTL_S = 300
+
+# The two boards shown, in row order. `experience` is total XP; the API
+# calls completed contracts `completedContracts`, which we call Work.
+BOARDS = ["experience", "completedContracts"]
+BOARD_PREFIX = {"experience": "X", "completedContracts": "W"}
+
 # Characters to display, left to right. Three is the maximum the 64 px
 # width supports at a readable font size — see design-notes.md.
 #
@@ -34,7 +54,9 @@ AGENT_TTL_S = 60
 # one the City's own AI runs. It is not readable from the API — it is our
 # intent — and it is what makes a takeover detectable: a character we
 # expect to drive ourselves that turns up hosted raises an alert, while
-# one that is meant to be hosted just shows a blue dot.
+# one that is meant to be hosted raises nothing. Since the control dot
+# came off the grid, this field has no effect on the steady-state display
+# at all — it only decides what counts as an alert.
 DEFAULT_AGENTS = [
     ("Praise", "user-agent-6b5bd91843c92aa99f", "ours"),
     ("Raze", "user-agent-bd73j2hhzv", "ours"),
@@ -50,9 +72,11 @@ HEIGHT = 32
 COL_W = [21, 21, 22]
 
 # tom-thumb is 6 px tall with a 4 px advance, so a 21 px column holds five
-# characters. Five 6 px rows are 30 px; the grid is centered in the 32 px
-# height, leaving a 1 px margin top and bottom.
-ROW_H = 6
+# characters. Four 7 px rows are 28 px; the grid is centered in the 32 px
+# height, leaving a 2 px margin top and bottom. (It was five 6 px rows
+# before crystal and hunger came out; the extra pixel per row is the only
+# dividend, and it is worth having at this size.)
+ROW_H = 7
 NAME_CHARS = 5
 
 # CG-pixel-3x5-mono is the only bundled font that is genuinely fixed-width,
@@ -97,18 +121,13 @@ LABEL = "#AAAAAA"
 BLACK = "#000000"
 NAME_COLOR = "#FFFF00"
 
-# Who is driving the character. This is the one strong color on the
-# display, so it carries the signal that matters most: whether our own
-# control loop still holds the character.
-DRIVE_COLOR = {
-    "ours": GREEN,  # self-hosted, our loop holds an active session
-    "hosted": BLUE,  # the City's hosted AI is driving
-    "unheld": YELLOW,  # in world, but no active controller
-    "offline": GREY,  # not in the world at all (endpoint 404s)
-    "hurt": RED,  # health below half
-}
-
-# Every activity gets its own color, so a glance at the middle row tells
+# _drive() still classifies who holds the character — _alerts() needs it,
+# and an offline character's name greys out — but it no longer gets a row
+# of its own. The control dot was the strongest color on the display and
+# it was spending it on a fact that is almost always "fine"; the cases
+# that are not fine raise an alert, which is louder than a dot.
+#
+# Every activity gets its own color, so a glance at the bottom row tells
 # you what the three are doing without reading the words. Keyed by the
 # label _activity() returns, not by the raw API string.
 ACTIVITY_COLOR = {
@@ -133,29 +152,31 @@ ACTIVITY_COLOR = {
     "off": "#505050",  # not in the world
 }
 
-# Hunger is drawn as a continuous spectrum rather than three fixed
-# colors: hue rotates from 210 degrees (blue) at 0% down to 30 degrees
-# (orange) at 100%. That arc passes through cyan, green and yellow, so
-# the row reads as a gauge — blue just ate, green comfortable, yellow
-# getting hungry, orange starving. The endpoints land exactly on the
-# palette's blue (#0080FF) and orange (#FF7F00).
-HUNGER_HUE_START = 210
-HUNGER_HUE_END = 30
-
 # Activity labels, five characters at most. Keys are the observer's
 # `activeAction.activity` strings; `craft:<recipe>` and `trade <n> <item>`
 # are handled by prefix in _activity() below.
+#
+# Marked (v) are verified against live agents — a 120-agent sample of the
+# observer on 2026-10-06, plus our own three. The rest are plausible
+# guesses carried from the first draft and have never been seen: an
+# unrecognised string is not an error, it just falls through to the
+# KIND_LABELS fallback below, so a wrong guess costs a nicer label and
+# nothing more. `tap_energy` was one of those guesses and was wrong — the
+# real string is `collect_energy`, which only surfaced when Raze was
+# retargeted onto the energy board. Both are kept; a dead key is free.
 ACTIVITY_LABELS = {
-    "mine_ore": "mine",
-    "chop_wood": "chop",
-    "trade_crypto": "hack",
-    "catch_fish": "fish",
-    "extract_data": "data",
-    "search_salvage": "salv",
+    "mine_ore": "mine",  # v
+    "chop_wood": "chop",  # v
+    "trade_crypto": "hack",  # v
+    "catch_fish": "fish",  # v
+    "extract_data": "data",  # v
+    "search_salvage": "salv",  # v
+    "harvest_crop": "farm",  # v
+    "collect_energy": "power",  # v
+    "linger": "idle",  # v — engage with nothing to engage
+    "tap_energy": "power",
     "breach_cache": "brch",
     "traverse_obstacle": "climb",
-    "harvest_crop": "farm",
-    "tap_energy": "power",
 }
 
 # Fallbacks when there is no activity string, keyed by activeAction.kind.
@@ -237,75 +258,49 @@ def _activity(agent):
         return "busy"
     return "idle"
 
-def _crystal(agent):
-    """Compact crystal count, four characters at most. Truncates rather
-    than rounds, so the number never reads higher than the truth."""
-    if agent == None:
+def fetch_board_ranks(board, agent_ids):
+    """{agentId: rank} for one leaderboard, for the characters we show.
+
+    `agentIds` narrows the response to our three, but the top-100 list for
+    the board still comes back, hence BOARD_TTL_S. Passing `board` also
+    changes the shape of `requestedAgents` from an object keyed by board
+    to a bare list, which is why this takes one board at a time — the API
+    rejects a repeated `board` parameter with a 400.
+
+    An agent who has not placed comes back as {"entry": null, "status":
+    "unranked"} rather than being omitted, so a missing key here means the
+    request failed, not that the character is off the board."""
+    url = "%s/api/leaderboards?agentIds=%s&board=%s" % (
+        OBSERVER,
+        ",".join(agent_ids),
+        board,
+    )
+    r = http.get(url, ttl_seconds = BOARD_TTL_S)
+    if r.status_code != 200:
+        print("[board] %s HTTP=%d (ranks unavailable)" % (board, r.status_code))
+        return {}
+
+    out = {}
+    for row in r.json().get("requestedAgents") or []:
+        entry = row.get("entry")
+        out[row.get("agentId")] = entry.get("rank") if entry != None else None
+    print("[board] %s HTTP=200 ranked=%d" % (
+        board,
+        len([v for v in out.values() if v != None]),
+    ))
+    return out
+
+def _rank(ranks, agent_id):
+    """Five characters at most: "X162", "W22", or "-" when unplaced.
+
+    The prefix is what makes two bare rank numbers tell themselves apart
+    on a display with no room for a legend."""
+    if agent_id not in ranks:
         return "-"
-    n = (agent.get("inventory") or {}).get("crystal", 0)
-    if n >= 1000000000:
-        return ">1G"
-    if n >= 1000000:
-        tenths = n // 100000
-        return "%d.%dM" % (tenths // 10, tenths % 10)
-    if n >= 10000:
-        return "%dK" % (n // 1000)
-    if n >= 1000:
-        tenths = n // 100
-        return "%d.%dK" % (tenths // 10, tenths % 10)
-    return str(n)
-
-HEX_DIGITS = "0123456789ABCDEF"
-
-def _hex2(v):
-    """Two-digit uppercase hex. Starlark's % operator has no width or
-    zero-pad flags, so %02X is not available."""
-    if v < 0:
-        v = 0
-    if v > 255:
-        v = 255
-    return HEX_DIGITS[v // 16] + HEX_DIGITS[v % 16]
-
-def _hunger_color(pct):
-    """Full-saturation HSV sweep, done in integer thousandths of a degree
-    so no float behaviour is relied on. JSON numbers decode as floats, so
-    coerce first — a float index into HEX_DIGITS is a runtime error."""
-    pct = int(pct)
-    if pct < 0:
-        pct = 0
-    if pct > 100:
-        pct = 100
-
-    span = (HUNGER_HUE_START - HUNGER_HUE_END) * 1000
-    hue = HUNGER_HUE_START * 1000 - span * pct // 100
-    sector = hue // 60000
-    up = (hue - sector * 60000) * 255 // 60000
-    down = 255 - up
-
-    if sector == 0:
-        r, g, b = 255, up, 0
-    elif sector == 1:
-        r, g, b = down, 255, 0
-    elif sector == 2:
-        r, g, b = 0, 255, up
-    elif sector == 3:
-        r, g, b = 0, down, 255
-    elif sector == 4:
-        r, g, b = up, 0, 255
-    else:
-        r, g, b = 255, 0, down
-
-    return "#" + _hex2(r) + _hex2(g) + _hex2(b)
-
-def _hunger(agent):
-    """(text, color). Higher is hungrier; 100 is starving."""
-    if agent == None:
-        return ("-", GREY)
-    hunger = agent.get("hunger") or {}
-    value = hunger.get("value")
-    if value == None:
-        return ("-", GREY)
-    return ("%d%%" % value, _hunger_color(value))
+    rank = ranks[agent_id]
+    if rank == None:
+        return "-"
+    return "%d" % int(rank)
 
 def _short_name(name):
     if name in SHORT_NAMES:
@@ -323,28 +318,42 @@ def _cell(width, child):
 def _text_cell(width, text, color):
     return _cell(width, render.Text(text, color = color, font = FONT))
 
-def _column(width, name, agent, expected):
+def _rank_cell(width, prefix, text):
+    """A grey board letter against a white rank, so the two rank rows are
+    distinguishable without a legend. Drawn as a Row of two Texts because
+    render.Text takes a single color."""
+    if text == "-":
+        return _text_cell(width, "-", GREY)
+    return _cell(width, render.Row(
+        children = [
+            render.Text(prefix, color = LABEL, font = FONT),
+            render.Text(text, color = WHITE, font = FONT),
+        ],
+    ))
+
+def _column(width, name, agent_id, agent, expected, ranks):
     drive = _drive(agent, expected)
     activity = _activity(agent)
-    hunger_text, hunger_color = _hunger(agent)
     name_color = GREY if drive == "offline" else NAME_COLOR
 
-    return render.Column(
-        children = [
-            _text_cell(width, _short_name(name), name_color),
-            _cell(width, render.Circle(color = DRIVE_COLOR[drive], diameter = 5)),
-            _text_cell(width, activity, ACTIVITY_COLOR.get(activity, LABEL)),
-            _text_cell(width, _crystal(agent), WHITE),
-            _text_cell(width, hunger_text, hunger_color),
-        ],
+    children = [_text_cell(width, _short_name(name), name_color)]
+    for board in BOARDS:
+        children.append(_rank_cell(
+            width,
+            BOARD_PREFIX[board],
+            _rank(ranks.get(board) or {}, agent_id),
+        ))
+    children.append(
+        _text_cell(width, activity, ACTIVITY_COLOR.get(activity, LABEL)),
     )
+    return render.Column(children = children)
 
-def _grid(rows):
-    """rows is a list of (name, agent, expected) in display order."""
+def _grid(rows, ranks):
+    """rows is a list of (name, agentId, agent, expected) in display order."""
     columns = []
     for i in range(len(rows)):
-        name, agent, expected = rows[i]
-        columns.append(_column(COL_W[i], name, agent, expected))
+        name, agent_id, agent, expected = rows[i]
+        columns.append(_column(COL_W[i], name, agent_id, agent, expected, ranks))
     return render.Box(
         width = WIDTH,
         height = HEIGHT,
@@ -362,7 +371,7 @@ def _alerts(rows):
     expect to drive ourselves means we lost it."""
     urgent = []
     lesser = []
-    for name, agent, expected in rows:
+    for name, _agent_id, agent, expected in rows:
         drive = _drive(agent, expected)
 
         if drive == "hurt":
@@ -451,21 +460,31 @@ def main(config):
 
     rows = []
     for name, agent_id, expected in agents:
-        rows.append((name, fetch_agent(name, agent_id), expected))
+        rows.append((name, agent_id, fetch_agent(name, agent_id), expected))
 
     if len(rows) == 0:
         return _error_view("NO AGENTS")
 
-    for name, agent, expected in rows:
-        print("[render] %s drive=%s act=%s crystal=%s hunger=%s" % (
+    # One leaderboard request per board for all three characters at once.
+    # A failed board yields {} and renders as "-" rather than failing the
+    # whole display: activity and the alerts are still worth showing.
+    agent_ids = [agent_id for _n, agent_id, _a, _e in rows]
+    ranks = {}
+    for board in BOARDS:
+        ranks[board] = fetch_board_ranks(board, agent_ids)
+
+    for name, agent_id, agent, expected in rows:
+        print("[render] %s drive=%s act=%s %s" % (
             name,
             _drive(agent, expected),
             _activity(agent),
-            _crystal(agent),
-            _hunger(agent)[0],
+            " ".join([
+                "%s=%s" % (BOARD_PREFIX[b], _rank(ranks.get(b) or {}, agent_id))
+                for b in BOARDS
+            ]),
         ))
 
-    grid = _grid(rows)
+    grid = _grid(rows, ranks)
     alerts = _alerts(rows)
     print("[render] alerts=%d %s" % (
         len(alerts),
