@@ -87,7 +87,18 @@
 
           INTERVAL=''${PUSH_INTERVAL_S:-300}
 
+          # Which characters this container shows, as the applet's `agents`
+          # parameter: Name:agentId:ours|hosted, comma separated. Empty means
+          # the built-in three, cycling one frame each.
+          AGENTS=''${MCITY_AGENTS:-}
+
+          # Each character wants its own Tidbyt installation, or two
+          # containers pushing the same id overwrite each other in the same
+          # slot rather than taking a slot each. Overrides the baked value.
+          INSTALL_ID=''${MCITY_INSTALLATION_ID:-''${INSTALL_ID}}
+
           echo "mcity daemon: push every ''${INTERVAL}s to device ''${DEVICE_ID} (installation ''${INSTALL_ID})"
+          [ -n "''${AGENTS}" ] && echo "mcity daemon: showing ''${AGENTS}"
 
           # Rank history for the trend shading. The applet has no memory —
           # a fresh `pixlet render` every cycle — so this loop keeps the
@@ -99,7 +110,8 @@
           while true; do
             ts=$(date -uIs)
             PREV=$(/app/rank-history.sh 2>/dev/null || echo "")
-            if pixlet render /app/main.star -o /tmp/frame.webp "prev=''${PREV}" 2>&1; then
+            if pixlet render /app/main.star -o /tmp/frame.webp \
+                 "prev=''${PREV}" "agents=''${AGENTS}" 2>&1; then
               if pixlet push \
                   --api-token "''${TIDBYT_KEY}" \
                   --installation-id "''${INSTALL_ID}" \

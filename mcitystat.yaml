@@ -7,6 +7,30 @@
 #
 # Image is built by scripts/build-container.sh, which bakes config.yaml in
 # at build time.
+#
+# ── Showing one character ────────────────────────────────────────────────
+#
+# MCITY_AGENTS restricts the display to the characters you name, in the
+# applet's own format — Name:agentId:ours|hosted, comma separated. Leave it
+# unset (as below) and the app cycles all three, one frame each.
+#
+#       - name: MCITY_AGENTS
+#         value: "Raze:user-agent-bd73j2hhzv:ours"
+#
+# The `ours|hosted` part is our *intent*, not something the API reports, and
+# it is only used to decide what counts as an alert: a character we expect to
+# drive ourselves that turns up hosted raises TAKEN OVER, while one that is
+# meant to be hosted raises nothing. Use `hosted` for Blame.
+#
+# ── Running one container per character ──────────────────────────────────
+#
+# Each character then gets a full slot in the Tidbyt rotation rather than
+# sharing one. Give every container its own MCITY_INSTALLATION_ID: pushing
+# two renders to the same installation id overwrites the same slot instead
+# of taking a slot each, so you would see only whichever pushed last.
+#
+# Installation ids must be alphanumeric. Uncomment the two extra containers
+# below for the full three-slot setup.
 
 apiVersion: v1
 kind: Pod
@@ -22,5 +46,56 @@ spec:
       env:
         - name: PUSH_INTERVAL_S
           value: "300"
+        # Blank shows all three characters. Set to a single
+        # Name:agentId:ours entry to dedicate this container to one.
+        - name: MCITY_AGENTS
+          value: ""
+        # Keeps the 7-day trend history across container restarts. Without
+        # a volume it lives in the container's /tmp and is lost on recreate,
+        # which costs the brightness shading until the window refills.
+        - name: MCITY_RANK_STATE_DIR
+          value: "/state"
+      volumeMounts:
+        - name: state
+          mountPath: /state
       securityContext:
         readOnlyRootFilesystem: false
+
+    # - name: tidbyt-praise
+    #   image: localhost/mcitystat:latest
+    #   env:
+    #     - name: PUSH_INTERVAL_S
+    #       value: "300"
+    #     - name: MCITY_AGENTS
+    #       value: "Praise:user-agent-6b5bd91843c92aa99f:ours"
+    #     - name: MCITY_INSTALLATION_ID
+    #       value: "mcitypraise"
+    #     - name: MCITY_RANK_STATE_DIR
+    #       value: "/state"
+    #   volumeMounts:
+    #     - name: state
+    #       mountPath: /state
+    #   securityContext:
+    #     readOnlyRootFilesystem: false
+    #
+    # - name: tidbyt-raze
+    #   image: localhost/mcitystat:latest
+    #   env:
+    #     - name: PUSH_INTERVAL_S
+    #       value: "300"
+    #     - name: MCITY_AGENTS
+    #       value: "Raze:user-agent-bd73j2hhzv:ours"
+    #     - name: MCITY_INSTALLATION_ID
+    #       value: "mcityraze"
+    #     - name: MCITY_RANK_STATE_DIR
+    #       value: "/state"
+    #   volumeMounts:
+    #     - name: state
+    #       mountPath: /state
+    #   securityContext:
+    #     readOnlyRootFilesystem: false
+
+  volumes:
+    - name: state
+      persistentVolumeClaim:
+        claimName: mcitystat-state

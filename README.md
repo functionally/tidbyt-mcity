@@ -109,11 +109,31 @@ podman kube play --replace mcitystat.yaml
 | `tidbyt_device_id` | From `pixlet devices` |
 | `tidbyt_installation_id` | Any short alphanumeric tag (`mcity`) |
 
-**Which characters are shown** lives in `DEFAULT_AGENTS` at the top of `main.star`, as `(display name, agent id, expected driver)`. `expected` is `ours` for a self-hosted character we run a control loop for, or `hosted` for one the City's AI runs — it is our intent, not something the API reports, and it is what makes a takeover detectable. You can also override the list at render time without editing the file:
+**Which characters are shown** lives in `DEFAULT_AGENTS` at the top of `main.star`, as `(display name, agent id, expected driver)`. `expected` is `ours` for a self-hosted character we run a control loop for, or `hosted` for one the City's AI runs — it is our intent, not something the API reports, and it is only used to decide what counts as an alert. Override the list at render time without editing the file:
 
 ```bash
 pixlet render main.star 'agents=Praise:user-agent-6b5…:ours,Raze:user-agent-bd7…:ours'
 ```
+
+In the container, the same string comes from **`MCITY_AGENTS`**. Blank shows all three, one frame each:
+
+```yaml
+- name: MCITY_AGENTS
+  value: "Raze:user-agent-bd73j2hhzv:ours"
+```
+
+### One container per character
+
+Each character then gets a full slot in the Tidbyt rotation instead of sharing one. Give every container its own **`MCITY_INSTALLATION_ID`** — two renders pushed to the same installation id overwrite the same slot rather than taking a slot each, so you would only ever see whichever pushed last. Ids must be alphanumeric.
+
+| Env var | What |
+| --- | --- |
+| `MCITY_AGENTS` | Characters to show; blank means all three |
+| `MCITY_INSTALLATION_ID` | Tidbyt slot; overrides the value baked from `config.yaml` |
+| `MCITY_RANK_STATE_DIR` | Where the 7-day rank history lives; use a volume so it survives a container recreate |
+| `PUSH_INTERVAL_S` | Seconds between pushes (default 300) |
+
+`mcitystat.yaml` carries a worked three-container example, commented out.
 
 ## Design notes
 
