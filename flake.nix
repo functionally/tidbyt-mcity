@@ -89,9 +89,17 @@
 
           echo "mcity daemon: push every ''${INTERVAL}s to device ''${DEVICE_ID} (installation ''${INSTALL_ID})"
 
+          # Rank history for the trend shading. The applet has no memory —
+          # a fresh `pixlet render` every cycle — so this loop keeps the
+          # state file and hands last week's ranks in as a parameter.
+          # A failure here only costs the shading, so it never blocks a push.
+          STATE_DIR=''${MCITY_RANK_STATE_DIR:-/tmp}
+          export MCITY_RANK_STATE="''${STATE_DIR}/mcity-ranks.tsv"
+
           while true; do
             ts=$(date -uIs)
-            if pixlet render /app/main.star -o /tmp/frame.webp 2>&1; then
+            PREV=$(/app/rank-history.sh 2>/dev/null || echo "")
+            if pixlet render /app/main.star -o /tmp/frame.webp "prev=''${PREV}" 2>&1; then
               if pixlet push \
                   --api-token "''${TIDBYT_KEY}" \
                   --installation-id "''${INSTALL_ID}" \
@@ -115,6 +123,8 @@
           contents = (with pkgs; [
             bashInteractive
             coreutils
+            curl
+            jq
             yq-go
             cacert
             tzdata
@@ -123,6 +133,8 @@
           extraCommands = ''
             mkdir -p app tmp
             cp ${./main.star} app/main.star
+            cp ${./scripts/rank-history.sh} app/rank-history.sh
+            chmod 0755 app/rank-history.sh
             cp ${configYaml} app/config.yaml
             cp ${entrypoint} app/loop.sh
             chmod 0755 app/loop.sh

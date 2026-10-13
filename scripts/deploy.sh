@@ -25,8 +25,9 @@ if [[ ! "$TIDBYT_INSTALLATION_ID" =~ ^[A-Za-z0-9]+$ ]]; then
   exit 1
 fi
 
-echo "Rendering frame…"
-pixlet render main.star -o out.webp
+echo "Recording ranks and rendering frame…"
+PREV="$(./scripts/rank-history.sh 2>/dev/null || echo "")"
+pixlet render main.star -o out.webp "prev=${PREV}"
 
 echo "Pushing to device ${TIDBYT_DEVICE_ID} as installation ${TIDBYT_INSTALLATION_ID}…"
 pixlet push \

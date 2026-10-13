@@ -65,8 +65,8 @@ for row in "${AGENTS[@]}"; do
       (.hunger.state // "?"),
       (.position.spaceId // "?") ] | @tsv' | tr '\t' ' ')
 
-  # Drive and hunger are no longer rows on the device, but they still decide
-  # whether the alert frame fires, so they stay in this table.
+  # Activity, drive and hunger are no longer rows on the device, but they
+  # still decide whether the alert frame fires, so they stay in this table.
   printf '  %-8s %-7s %-6s %-6s %-8s %-8s %-6s %s\n' \
     "$name" "$expect" \
     "X${XP_RANK[$id]:--}" "W${WORK_RANK[$id]:--}" \
